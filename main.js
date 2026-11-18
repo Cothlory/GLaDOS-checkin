@@ -1,34 +1,95 @@
+const origin = 'https://glados.cloud'
+const sessionCookie = /(?:^|;)\s*gld[:_]sess=[^;\s]+/
+const sessionSignature = /(?:^|;)\s*gld[:_]sess\.sig=[^;\s]+/
+const splitLines = (value) => (value ?? '').split(/\r?\n/).map((line) => line.trim())
+
+const gladosRequest = async (path, label, options) => {
+  let response
+  try {
+    response = await fetch(`${origin}${path}`, {
+      ...options,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    })
+  } catch {
+    throw new Error(`${label}请求失败，请检查网络连接`)
+  }
+  if (response.headers.get('cf-mitigated') === 'challenge') {
+    throw new Error(`${label}需要在 GLaDOS 官网完成 Cloudflare 验证`)
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(`${label}未获授权（HTTP ${response.status}），请检查登录会话`)
+  }
+  if (!response.ok) throw new Error(`${label}请求失败（HTTP ${response.status}）`)
+
+  let result
+  try {
+    result = await response.json()
+  } catch {
+    throw new Error(`${label}接口未返回 JSON`)
+  }
+  if (result?.reason === 'turnstile') {
+    throw new Error(`${label}需要在 GLaDOS 官网完成 Cloudflare 验证`)
+  }
+  if (result?.reason === 'device-mismatch') {
+    throw new Error(`${label}设备校验失败，请从同一登录会话更新 GLADOS 和 GLADOS_UA`)
+  }
+  if (result?.code === -2 || result?.message === '没有权限') {
+    throw new Error(`${label}会话未获授权，请从同一登录会话更新 GLADOS 和 GLADOS_UA`)
+  }
+  return result
+}
+
 const glados = async () => {
   const notice = []
-  if (!process.env.GLADOS) return
-  for (const cookie of String(process.env.GLADOS).split('\n')) {
+  const cookies = splitLines(process.env.GLADOS)
+  const userAgents = splitLines(process.env.GLADOS_UA)
+  if (!cookies.some(Boolean)) {
+    process.exitCode = 1
+    console.error('未配置 GLADOS，无法签到')
+    return ['Checkin Error', '未配置 GLADOS，无法签到']
+  }
+
+  let account = 0
+  for (const [index, cookie] of cookies.entries()) {
     if (!cookie) continue
+    account += 1
     try {
-      const common = {
-        'cookie': cookie,
-        'referer': 'https://glados.cloud/console/checkin',
-        'user-agent': 'Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)',
+      if (!sessionCookie.test(cookie) || !sessionSignature.test(cookie)) {
+        throw new Error('GLADOS 缺少新版会话字段 gld:sess 或 gld:sess.sig，请重新登录后更新')
       }
-      const action = await fetch('https://glados.cloud/api/user/checkin', {
+      const headers = { cookie, referer: `${origin}/console/checkin` }
+      const userAgent = userAgents.length === 1 ? userAgents[0] : userAgents[index]
+      if (userAgent) headers['user-agent'] = userAgent
+
+      const status = await gladosRequest('/api/user/status', '登录状态', { headers })
+      if (status?.code !== 0) throw new Error('GLaDOS 未确认登录状态')
+
+      const action = await gladosRequest('/api/user/checkin', '签到', {
         method: 'POST',
-        headers: { ...common, 'content-type': 'application/json' },
+        headers: { ...headers, origin, 'content-type': 'application/json' },
         body: '{"token":"glados.cloud"}',
-      }).then((r) => r.json())
-      if (action?.code) throw new Error(action?.message)
-      const status = await fetch('https://glados.cloud/api/user/status', {
-        method: 'GET',
-        headers: { ...common },
-      }).then((r) => r.json())
-      if (status?.code) throw new Error(status?.message)
+      })
+      const alreadyCheckedIn = action?.code === 1 &&
+        /repeats|already checked in|已签到|重复签到/i.test(action?.message ?? '')
+      if (action?.code !== 0 && !alreadyCheckedIn) {
+        const code = Number.isInteger(action?.code) ? `（code=${action.code}）` : ''
+        throw new Error(`GLaDOS 未确认签到${code}`)
+      }
+
       notice.push(
         'Checkin OK',
-        `${action?.message}`,
-        `Left Days ${Number(status?.data?.leftDays)}`
+        `账号 ${account}：${alreadyCheckedIn ? '今日已签到' : '签到成功'}`
       )
+      const leftDays = Number(status?.data?.leftDays)
+      if (Number.isFinite(leftDays)) notice.push(`签到请求前剩余 ${leftDays} 天`)
     } catch (error) {
+      process.exitCode = 1
+      const message = `账号 ${account}：${error.message}`
+      console.error(message)
       notice.push(
         'Checkin Error',
-        `${error}`,
+        message,
         `<${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}>`
       )
     }

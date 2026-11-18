@@ -8,9 +8,11 @@ GitHub Actions 实现 [GLaDOS][glados] 自动签到
 
 1. Fork 这个仓库
 
-1. 登录 [GLaDOS][glados] 获取 Cookie
+1. 登录 [GLaDOS 控制台](https://glados.cloud/console/checkin)，获取当前会话的 Cookie。确保包含 `gld:sess` 和配套的 `gld:sess.sig`。
 
 1. 添加 Cookie 到 Secret `GLADOS`
+
+1. 将同一登录浏览器的 User-Agent 添加到 Secret `GLADOS_UA`。多个浏览器分别登录时，按 `GLADOS` 的账号顺序逐行填写。
 
 1. 启用 Actions, 每天北京时间 00:10 自动签到
 
@@ -18,7 +20,9 @@ GitHub Actions 实现 [GLaDOS][glados] 自动签到
 
 1. 如有多个帐号, 可以写为多行 Secret `GLADOS`, 每行写一个 Cookie
 
-1. 如需修改时间, 可以修改文件 [run.yml](.github/workflows/run.yml#L7) 中的 `cron` 参数, 格式可参考 [crontab]
+1. 如需修改时间, 可以修改文件 [build.yml](.github/workflows/build.yml#L5) 中的 `cron` 参数, 格式可参考 [crontab]
+
+1. 若日志提示需要 Cloudflare 验证，请到 GLaDOS 控制台完成验证和签到。
 
 1. 如需推送通知, 可配置 Secret `NOTIFY`, 已支持:
     1. [WxPusher][wxpusher]: 格式 `wxpusher:{token}:{uid}`

@@ -20,6 +20,7 @@ jobs:
       - name: Run main.js
         env:
           GLADOS: ${{ secrets.GLADOS }}
+          GLADOS_UA: ${{ secrets.GLADOS_UA }}
           NOTIFY: ${{ secrets.NOTIFY }}
         run: |
           npm run main
