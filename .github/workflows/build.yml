@@ -1,8 +1,6 @@
 name: Auto Sign
 
 on:
-  schedule:
-    - cron: 10 16 * * *
   workflow_dispatch:
 
 jobs:
@@ -24,11 +22,3 @@ jobs:
           NOTIFY: ${{ secrets.NOTIFY }}
         run: |
           npm run main
-        
-  workflow-keepalive:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - uses: liskin/gh-workflow-keepalive@v1
