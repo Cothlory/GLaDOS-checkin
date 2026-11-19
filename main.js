@@ -2,6 +2,18 @@ const origin = 'https://glados.cloud'
 const sessionCookie = /(?:^|;)\s*gld[:_]sess=[^;\s]+/
 const sessionSignature = /(?:^|;)\s*gld[:_]sess\.sig=[^;\s]+/
 const splitLines = (value) => (value ?? '').split(/\r?\n/).map((line) => line.trim())
+const checkinPattern = /check[\s_-]*in|签到/i
+const checkinDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', dateStyle: 'short' })
+
+const isFromDay = (entry, day) => {
+  const raw = entry?.time ?? entry?.createdAt ?? entry?.created_at ?? entry?.date
+  if (raw == null) return false
+  const value = typeof raw === 'string' && /^\d{10,13}$/.test(raw) ? Number(raw) : raw
+  const timestamp = typeof value === 'number'
+    ? (value < 1e12 ? value * 1000 : value)
+    : Date.parse(value)
+  return Number.isFinite(timestamp) && checkinDay.format(timestamp) === day
+}
 
 const gladosRequest = async (path, label, options) => {
   let response
@@ -65,22 +77,36 @@ const glados = async () => {
       const status = await gladosRequest('/api/user/status', '登录状态', { headers })
       if (status?.code !== 0) throw new Error('GLaDOS 未确认登录状态')
 
+      const day = checkinDay.format()
       const action = await gladosRequest('/api/user/checkin', '签到', {
         method: 'POST',
         headers: { ...headers, origin, 'content-type': 'application/json' },
         body: '{"token":"glados.cloud"}',
       })
-      const alreadyCheckedIn = action?.code === 1 &&
-        /repeats|already checked in|已签到|重复签到/i.test(action?.message ?? '')
-      if (action?.code !== 0 && !alreadyCheckedIn) {
+      const alreadyCheckedIn = action?.code === 1
+      if (alreadyCheckedIn) {
+        const points = await gladosRequest('/api/user/points', '积分流水', { headers })
+        const history = points?.history ?? points?.list
+        if (points?.code !== 0 || !Array.isArray(history)) {
+          throw new Error('签到返回 code=1，但无法读取积分流水确认结果')
+        }
+        const record = history.filter((entry) => isFromDay(entry, day))
+        const hasCheckin = record.some((entry) =>
+          [entry.reason, entry.type, entry.action, entry.operation, entry.description, entry.message]
+            .some((field) => typeof field === 'string' && checkinPattern.test(field))
+        )
+        if (!hasCheckin) {
+          const detail = record.length ? '当天积分记录中没有可确认的签到条目' : '当天没有积分记录'
+          throw new Error(`签到返回 code=1，${detail}`)
+        }
+      } else if (action?.code !== 0) {
         const code = Number.isInteger(action?.code) ? `（code=${action.code}）` : ''
         throw new Error(`GLaDOS 未确认签到${code}`)
       }
 
-      notice.push(
-        'Checkin OK',
-        `账号 ${account}：${alreadyCheckedIn ? '今日已签到' : '签到成功'}`
-      )
+      const result = `账号 ${account}：${alreadyCheckedIn ? '积分流水确认今日已签到' : '签到成功'}`
+      console.log(result)
+      notice.push('Checkin OK', result)
       const leftDays = Number(status?.data?.leftDays)
       if (Number.isFinite(leftDays)) notice.push(`签到请求前剩余 ${leftDays} 天`)
     } catch (error) {
@@ -174,4 +200,4 @@ const main = async () => {
   await notify(await glados())
 }
 
-main()
+await main()
